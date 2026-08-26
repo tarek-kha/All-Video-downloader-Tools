@@ -33,6 +33,28 @@ export interface ResolveEntry {
 const cache = new Map<string, ResolveEntry>()
 const TTL_MS = 5 * 60 * 1000 // 5 minutes — within the audit's suggested 2-10 min window
 const TMP_DIR = path.join(os.tmpdir(), "vdl-resolve-cache")
+const MAX_ENTRIES = (() => {
+  const n = parseInt(process.env.RESOLVE_CACHE_MAX_ENTRIES || "500", 10)
+  return Number.isFinite(n) && n > 0 ? n : 500
+})()
+
+function evictIfFull(now: number): void {
+  if (cache.size < MAX_ENTRIES) return
+  for (const [id, e] of cache) {
+    if (cache.size < MAX_ENTRIES) break
+    if (e.expiresAt <= now) {
+      cache.delete(id)
+      fs.rm(e.infoJsonPath, { force: true }).catch(() => {})
+    }
+  }
+  while (cache.size >= MAX_ENTRIES) {
+    const oldestId = cache.keys().next().value
+    if (!oldestId) break
+    const oldest = cache.get(oldestId)
+    cache.delete(oldestId)
+    if (oldest) fs.rm(oldest.infoJsonPath, { force: true }).catch(() => {})
+  }
+}
 
 export async function putResolve(
   url: string,
@@ -46,6 +68,7 @@ export async function putResolve(
   const infoJsonPath = path.join(TMP_DIR, `${id}.json`)
   await fs.writeFile(infoJsonPath, JSON.stringify(entry))
   const now = Date.now()
+  evictIfFull(now)
   cache.set(id, { url, cookiesPath, sessionId, infoJsonPath, createdAt: now, expiresAt: now + TTL_MS })
   return id
 }
@@ -61,9 +84,10 @@ export function getResolve(id: string, requestingSessionId: string | undefined):
     fs.rm(hit.infoJsonPath, { force: true }).catch(() => {})
     return null
   }
-  // If the resolve used a specific session's cookies, only that same
-  // session may reuse it.
-  if (hit.cookiesPath && hit.sessionId && hit.sessionId !== requestingSessionId) {
+  // Never trust resolveId alone: it must belong to the exact same session
+  // that created it (cookie-backed or not), otherwise one visitor could
+  // replay another visitor's resolve context.
+  if (!hit.sessionId || !requestingSessionId || hit.sessionId !== requestingSessionId) {
     return null
   }
   return hit
@@ -78,3 +102,5 @@ setInterval(() => {
     }
   }
 }, 60_000).unref?.()
+
+export const __testing = { cache, TTL_MS, MAX_ENTRIES }

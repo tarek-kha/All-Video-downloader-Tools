@@ -22,9 +22,14 @@ export async function GET(request: Request) {
   try {
     const res = await safeFetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, timeoutMs: 10_000 })
     if (!res.ok) throw new Error(`Upstream ${res.status}`)
-    const contentType = res.headers.get("content-type") ?? ""
-    if (!/^image\//.test(contentType)) throw new Error("Upstream did not return an image")
-    const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg"
+    const contentType = (res.headers.get("content-type") ?? "").toLowerCase()
+    const isAllowedImage =
+      contentType.startsWith("image/jpeg") ||
+      contentType.startsWith("image/png") ||
+      contentType.startsWith("image/webp") ||
+      contentType.startsWith("image/gif")
+    if (!isAllowedImage) throw new Error("Upstream did not return a supported image")
+    const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : contentType.includes("gif") ? "gif" : "jpg"
     const body = await readLimited(res, MAX_THUMB_BYTES)
     return new NextResponse(new Uint8Array(body), {
       headers: {

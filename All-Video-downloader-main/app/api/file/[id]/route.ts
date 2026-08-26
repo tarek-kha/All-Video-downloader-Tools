@@ -101,23 +101,33 @@ export async function GET(
 ) {
   const { id } = await params
   // Prevent path traversal — id must be a UUID
-  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
     return NextResponse.json({ error: "Invalid file id" }, { status: 400 })
   }
   const dir = path.join(DOWNLOAD_ROOT, id)
   try {
+    const dirReal = await fs.realpath(dir)
     const files = await fs.readdir(dir)
     if (!files.length) throw new Error("empty")
     let best = files[0]
     let bestSize = 0
+    let bestPath = ""
     for (const f of files) {
-      const st = await fs.stat(path.join(dir, f))
-      if (st.size > bestSize) {
-        bestSize = st.size
-        best = f
-      }
+      const candidate = path.join(dirReal, f)
+      const lst = await fs.lstat(candidate).catch(() => null)
+      if (!lst || !lst.isFile()) continue
+      // Defense in depth: even for regular files, ensure the resolved path
+      // is still inside this download id directory.
+      const real = await fs.realpath(candidate).catch(() => "")
+      if (!real.startsWith(`${dirReal}${path.sep}`)) continue
+      const st = await fs.stat(real)
+      if (st.size <= bestSize) continue
+      bestSize = st.size
+      best = f
+      bestPath = real
     }
-    const filePath = path.join(dir, best)
+    if (!bestPath || bestSize <= 0) throw new Error("empty")
+    const filePath = bestPath
     const ext = path.extname(best).toLowerCase()
     const contentType = MIME[ext] ?? "application/octet-stream"
 

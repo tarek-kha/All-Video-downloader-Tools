@@ -55,8 +55,8 @@ describe("isSafeToFetch (DNS-resolving check)", () => {
     expect(result.ok).toBe(false)
   })
 
-  it("allows a well-known public hostname", async () => {
-    const result = await isSafeToFetch("https://example.com/")
+  it("allows a public IP address without requiring DNS", async () => {
+    const result = await isSafeToFetch("https://8.8.8.8/")
     expect(result.ok).toBe(true)
   })
 })

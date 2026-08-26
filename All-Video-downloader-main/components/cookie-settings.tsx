@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Cookie, Check, Trash, Loader2 } from "lucide-react"
+import { parseApiResponse } from "@/lib/client-api"
 
 const PLATFORM_LABELS: Record<string, string> = {
   youtube: "YouTube",
@@ -39,7 +40,7 @@ export function CookieSettings() {
 
   const refresh = useCallback(() => {
     fetch("/api/cookies")
-      .then((r) => r.json())
+      .then((r) => parseApiResponse<{ platforms?: PlatformStatus }>(r))
       .then((d) => setStatus(d.platforms ?? {}))
       .catch(() => {})
   }, [])
@@ -61,8 +62,7 @@ export function CookieSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ platform, content }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? "Failed to save")
+      await parseApiResponse<{ configured: boolean }>(res)
       setDrafts((d) => ({ ...d, [platform]: "" }))
       setMessage({ ok: true, text: `${PLATFORM_LABELS[platform]} cookies saved.` })
       refresh()
@@ -74,9 +74,14 @@ export function CookieSettings() {
   }
 
   const clear = async (platform: string) => {
-    await fetch(`/api/cookies?platform=${platform}`, { method: "DELETE" })
-    setMessage({ ok: true, text: `${PLATFORM_LABELS[platform]} cookies removed.` })
-    refresh()
+    try {
+      const res = await fetch(`/api/cookies?platform=${platform}`, { method: "DELETE" })
+      await parseApiResponse<{ configured: boolean }>(res)
+      setMessage({ ok: true, text: `${PLATFORM_LABELS[platform]} cookies removed.` })
+      refresh()
+    } catch (e: unknown) {
+      setMessage({ ok: false, text: e instanceof Error ? e.message : "Failed to remove cookies" })
+    }
   }
 
   return (
