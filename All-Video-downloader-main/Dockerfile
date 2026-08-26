@@ -67,6 +67,12 @@ ENV NODE_ENV=production
 COPY . .
 RUN npm run build
 
+# Build-time verification: fail the image build immediately if the yt-dlp
+# binary or its venv Python interpreter is missing or broken. This is cheap
+# (offline --version flag, no network traffic) and ensures a broken yt-dlp
+# can never reach production silently.
+RUN yt-dlp --version
+
 EXPOSE 3000
 
 CMD ["sh", "-c", "npx next start -p ${PORT:-3000}"]

@@ -30,11 +30,18 @@ export async function checkCommand(cmd: string, args: string[], timeoutMs = 5000
   return (await runCommand(cmd, args, timeoutMs)) !== null
 }
 
+// yt-dlp runs inside a Python venv. On a cold Render Free instance the Python
+// interpreter startup + module import realistically takes 2–10 s, so 5 s is
+// not enough. 15 s is generous but still cheap (offline `--version` flag,
+// never hits the network).  Other binaries (ffmpeg, deno) are native and
+// cold-start in well under 1 s, so 5 s is fine for them.
+const YTDLP_HEALTH_TIMEOUT_MS = 15_000
+
 /** Required runtime dependencies — the app cannot correctly extract/convert
  * video without these. Missing any of these should surface as unhealthy. */
 export async function checkRequiredDependencies(): Promise<DependencyStatus[]> {
   const checks: Array<[string, () => Promise<boolean>]> = [
-    ["yt-dlp", () => checkCommand("yt-dlp", ["--version"])],
+    ["yt-dlp", () => checkCommand("yt-dlp", ["--version"], YTDLP_HEALTH_TIMEOUT_MS)],
     ["ffmpeg", () => checkCommand("ffmpeg", ["-version"])],
     ["ffprobe", () => checkCommand("ffprobe", ["-version"])],
     ["deno", () => checkCommand("deno", ["--version"])],
