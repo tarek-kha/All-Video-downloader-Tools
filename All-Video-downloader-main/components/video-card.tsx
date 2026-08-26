@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select"
 import { Download, Image, Loader2, Clock, User } from "lucide-react"
 import { VideoInfo, DownloadResult, HistoryItem } from "@/types"
+import { parseApiResponse } from "@/lib/client-api"
 
 function formatDuration(s: number | null): string {
   if (s == null) return "—"
@@ -77,8 +78,7 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
         // re-deriving platform/cookie info from the raw URL again.
         body: JSON.stringify({ url: sourceUrl, quality, resolveId: info.resolveId }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? "Download failed")
+      const data = await parseApiResponse<DownloadResult>(res)
       setDone(data)
       onSettled(historyId, {
         filename: data.filename,

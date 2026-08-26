@@ -2,7 +2,7 @@ import path from "path"
 import { promises as fs } from "fs"
 import { execFileAsync, cookieArgs, MAX_FILESIZE } from "./ytdlp"
 import { validateMediaFile } from "./validate"
-import { safeFetch, UnsafeUrlError } from "./security/safe-fetch"
+import { safeFetch, readLimited, UnsafeUrlError } from "./security/safe-fetch"
 
 export const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -12,15 +12,25 @@ export const BROWSER_UA =
 // ---------------------------------------------------------------------------
 
 export type FailureCategory =
-  | "drm"
-  | "geo-restricted"
-  | "login-required"
-  | "deleted"
-  | "anti-bot"
-  | "unsupported"
-  | "too-large"
-  | "blocked-url"
-  | "unavailable"
+  | "INVALID_URL"
+  | "BLOCKED_URL"
+  | "UNSUPPORTED_URL"
+  | "VIDEO_UNAVAILABLE"
+  | "PRIVATE_CONTENT"
+  | "LOGIN_REQUIRED"
+  | "AGE_RESTRICTED"
+  | "GEO_RESTRICTED"
+  | "DRM"
+  | "ANTI_BOT"
+  | "RATE_LIMITED"
+  | "NO_FORMAT"
+  | "FILE_TOO_LARGE"
+  | "RESOLVE_TIMEOUT"
+  | "DOWNLOAD_TIMEOUT"
+  | "UPSTREAM_ERROR"
+  | "VALIDATION_FAILED"
+  | "SERVER_BUSY"
+  | "INTERNAL_ERROR"
 
 export interface ExtractionFailure {
   category: FailureCategory
@@ -29,19 +39,28 @@ export interface ExtractionFailure {
 }
 
 const CATEGORY_MESSAGES: Record<FailureCategory, string> = {
-  drm: "This video is DRM-protected (encrypted). Downloading it is not technically possible.",
-  "geo-restricted":
+  INVALID_URL: "The provided URL is invalid.",
+  BLOCKED_URL: "This URL points to a private/internal address and cannot be fetched.",
+  UNSUPPORTED_URL: "This URL is not supported by the extractor.",
+  VIDEO_UNAVAILABLE: "This video appears to be unavailable, deleted, or no longer accessible.",
+  PRIVATE_CONTENT: "This video is private and cannot be downloaded without access.",
+  LOGIN_REQUIRED:
+    "This video requires login verification. Add valid cookies for this platform and try again.",
+  AGE_RESTRICTED: "This content is age-restricted and requires an authenticated account.",
+  GEO_RESTRICTED:
     "This video is geo-restricted by its uploader/platform and isn't available from the server's region — this is unrelated to cookies or login.",
-  "login-required":
-    "This video requires a login / age verification. Add cookies for this platform (top-right Cookies button) to unlock it. Note: some failures also come from expired cookies, YouTube's PO-Token requirement, or IP-based rate limiting — cookies alone won't fix those.",
-  deleted: "This video appears to be deleted, private, or no longer available.",
-  "anti-bot":
+  DRM: "This video is DRM-protected (encrypted). Downloading it is not technically possible.",
+  ANTI_BOT:
     "The site is blocking automated access (anti-bot / CAPTCHA). Adding cookies sometimes helps.",
-  unsupported:
-    "No downloadable public video stream could be detected on this page after trying all extraction methods.",
-  "too-large": `This file is larger than the ${MAX_FILESIZE} limit — try a lower quality.`,
-  "blocked-url": "This URL points to a private/internal address and cannot be fetched.",
-  unavailable: "No playable media could be extracted from this URL.",
+  RATE_LIMITED: "The upstream platform rate-limited this request. Please wait and try again.",
+  NO_FORMAT: "The selected format/quality is not available for this video.",
+  FILE_TOO_LARGE: `This file is larger than the ${MAX_FILESIZE} limit — try a lower quality.`,
+  RESOLVE_TIMEOUT: "Resolving video metadata timed out. Please retry.",
+  DOWNLOAD_TIMEOUT: "Downloading the media timed out. Try a lower quality and retry.",
+  UPSTREAM_ERROR: "The upstream platform returned an unexpected server error.",
+  VALIDATION_FAILED: "Downloaded output failed media validation.",
+  SERVER_BUSY: "The download server is busy. Please try again shortly.",
+  INTERNAL_ERROR: "Request failed due to an internal server error.",
 }
 
 /**
@@ -55,28 +74,44 @@ const CATEGORY_MESSAGES: Record<FailureCategory, string> = {
  * "max-filesize" check even when the real error was something unrelated,
  * such as "Requested format is not available").
  */
-export function classifyFailure(rawMsg: string): ExtractionFailure {
-  const m = rawMsg.toLowerCase()
-  let category: FailureCategory = "unavailable"
-  if (/drm|widevine|fairplay|playready|this video is protected|encrypted media|license url/.test(m))
-    category = "drm"
-  else if (/geo.?restrict|not available in your (country|region)|georestricted|geo.?block|not made this video available/.test(m))
-    category = "geo-restricted"
-  else if (
-    /sign in|log ?in required|login required|private video|authentication|confirm your age|age.?(gate|restrict|verification)|cookies-from-browser|empty media response|requested content is not available, rate.?limit|po ?token/.test(m)
-  )
-    category = "login-required"
-  else if (/removed|deleted|no longer available|video unavailable|does not exist|404|not found/.test(m))
-    category = "deleted"
-  // Only the exact runtime phrase yt-dlp prints when a file exceeds
-  // --max-filesize counts — NOT just the presence of the flag name (which
-  // always appears in the echoed command line for every attempt).
-  else if (/file is larger than max-filesize/.test(m)) category = "too-large"
-  else if (/blocked unsafe url|private\/internal/.test(m)) category = "blocked-url"
-  else if (/403|forbidden|captcha|cloudflare|access denied|blocked|429|too many requests|challenge|bot/.test(m))
-    category = "anti-bot"
-  else if (/unsupported url|no video formats|unable to extract/.test(m)) category = "unsupported"
-  return { category, message: CATEGORY_MESSAGES[category], detail: rawMsg.slice(0, 500) }
+function runtimeErrorText(rawMsg: string): string {
+  const errorMarker = rawMsg.search(/\bERROR:\s/i)
+  const base = errorMarker >= 0 ? rawMsg.slice(errorMarker) : rawMsg
+  return base
+    .replace(/(?:^|\n)\s*(?:Error:\s*)?Command failed:[^\n]*/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function compactDetail(raw: string): string {
+  return runtimeErrorText(raw).slice(0, 240)
+}
+
+export function classifyFailure(rawMsg: string, phase: "resolve" | "download" = "download"): ExtractionFailure {
+  const m = runtimeErrorText(rawMsg).toLowerCase()
+  let category: FailureCategory = "INTERNAL_ERROR"
+  if (/invalid url|only http\(s\)|malformed url/.test(m)) category = "INVALID_URL"
+  else if (/blocked unsafe url|private\/internal/.test(m)) category = "BLOCKED_URL"
+  else if (/server is busy|maximum number of downloads/.test(m)) category = "SERVER_BUSY"
+  else if (/drm|widevine|fairplay|playready|encrypted media|license url/.test(m)) category = "DRM"
+  else if (/not available in your (country|region)|geo.?restrict|geoblock|geo.?block/.test(m)) category = "GEO_RESTRICTED"
+  else if (/confirm your age|age.?restrict|age.?verification/.test(m)) category = "AGE_RESTRICTED"
+  else if (/private video|private content/.test(m)) category = "PRIVATE_CONTENT"
+  else if (/sign in|log ?in required|login required|authentication required|cookies-from-browser|po ?token/.test(m))
+    category = "LOGIN_REQUIRED"
+  else if (/too many requests|rate.?limit|429/.test(m)) category = "RATE_LIMITED"
+  else if (/captcha|cloudflare|access denied|forbidden|challenge|bot/.test(m)) category = "ANTI_BOT"
+  else if (/requested format is not available|no video formats|no suitable format/.test(m)) category = "NO_FORMAT"
+  else if (/file is larger than max-filesize/.test(m)) category = "FILE_TOO_LARGE"
+  else if (/unsupported url/.test(m)) category = "UNSUPPORTED_URL"
+  else if (/rejected fake media|ffprobe could not parse|not media:|no audio or video streams/.test(m))
+    category = "VALIDATION_FAILED"
+  else if (/video unavailable|deleted|removed|no longer available|does not exist|404|not found/.test(m))
+    category = "VIDEO_UNAVAILABLE"
+  else if (/http error 5\d\d|upstream 5\d\d|service unavailable|bad gateway/.test(m)) category = "UPSTREAM_ERROR"
+  else if (/timed out|etimedout|timeout/.test(m)) category = phase === "resolve" ? "RESOLVE_TIMEOUT" : "DOWNLOAD_TIMEOUT"
+
+  return { category, message: CATEGORY_MESSAGES[category], detail: compactDetail(rawMsg) }
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +205,8 @@ async function fetchPage(url: string, referer?: string): Promise<string> {
     })
     const ct = res.headers.get("content-type") ?? ""
     if (!res.ok || /image|video|audio|octet-stream/.test(ct)) return ""
-    return unescapeHtml(await res.text())
+    const body = await readLimited(res, 2 * 1024 * 1024)
+    return unescapeHtml(new TextDecoder().decode(body))
   } catch {
     return ""
   }
@@ -190,8 +226,7 @@ async function fetchText(url: string, referer?: string): Promise<string> {
     const ct = res.headers.get("content-type") ?? ""
     // Only parse textual bodies (JSON/text); never pull a media stream here.
     if (/image|video|audio|octet-stream|mpegurl|dash/.test(ct)) return ""
-    const txt = await res.text()
-    return txt.length > 3_000_000 ? txt.slice(0, 3_000_000) : txt
+    return new TextDecoder().decode(await readLimited(res, 3 * 1024 * 1024))
   } catch {
     return ""
   }
@@ -243,7 +278,7 @@ export async function scanPageForMedia(url: string): Promise<MediaCandidate[]> {
   const embeds = detectEmbeds(html, url)
   const direct = collectFromHtml(html, url)
   const candidates: MediaCandidate[] = direct
-    .filter((u) => MEDIA_URL_RE.test(u) || /\.(m3u8|mpd|mp4|webm|mov|m4v|mkv)(\?|$)/i.test(u))
+    .filter((u) => /^https?:\/\/.+\.(?:mp4|webm|mov|m4v|mkv|m3u8|mpd)(?:\?|$)/i.test(u))
     .map((u) => ({ url: u, referer: url, kind: kindOf(u) }))
 
   // One level of iframe embeds (players hosted on CDN subdomains)

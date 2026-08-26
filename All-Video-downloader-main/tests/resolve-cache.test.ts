@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi, beforeEach } from "vitest"
 import { promises as fs } from "fs"
 import { putResolve, getResolve } from "../lib/resolve-cache"
 
@@ -30,10 +30,9 @@ describe("resolve-cache", () => {
     expect(getResolve(id, "session-intruder")).toBeNull()
   })
 
-  it("allows any session to reuse a resolve that used no cookies", async () => {
+  it("denies cross-session reuse even when no cookies were involved", async () => {
     const id = await putResolve("https://example.com/public", null, "session-owner", { title: "Public" })
-    // No cookies were involved, so cross-session reuse is fine (nothing sensitive)
-    expect(getResolve(id, "some-other-session")).not.toBeNull()
+    expect(getResolve(id, "some-other-session")).toBeNull()
   })
 
   it("writes the entry to a temp info.json file for --load-info-json reuse", async () => {
@@ -42,5 +41,24 @@ describe("resolve-cache", () => {
     expect(hit?.infoJsonPath).toMatch(/\.json$/)
     const info = await readInfoJson(hit!.infoJsonPath)
     expect(info.title).toBe("InfoJson")
+  })
+})
+
+describe("resolve-cache bounds", () => {
+  beforeEach(() => {
+    vi.resetModules()
+    delete process.env.RESOLVE_CACHE_MAX_ENTRIES
+  })
+
+  it("caps in-memory entries and evicts oldest entries when at capacity", async () => {
+    process.env.RESOLVE_CACHE_MAX_ENTRIES = "2"
+    const mod = await import("../lib/resolve-cache")
+    const id1 = await mod.putResolve("https://example.com/1", null, "session-a", { id: 1 })
+    const id2 = await mod.putResolve("https://example.com/2", null, "session-a", { id: 2 })
+    const id3 = await mod.putResolve("https://example.com/3", null, "session-a", { id: 3 })
+
+    expect(mod.__testing.cache.size).toBeLessThanOrEqual(2)
+    expect(mod.getResolve(id1, "session-a")).toBeNull()
+    expect(mod.getResolve(id2, "session-a") || mod.getResolve(id3, "session-a")).not.toBeNull()
   })
 })

@@ -1,13 +1,23 @@
 import { NextRequest, NextResponse } from "next/server"
 import { isValidUrl, detectPlatform, platformKey, QUALITY_MAP } from "@/lib/ytdlp"
 import { probeWithFallbacks, classifyFailure } from "@/lib/extract"
-import { cookiesPathForPlatform, SESSION_COOKIE } from "@/lib/session"
+import { cookiesPathForPlatform, getOrCreateSessionId, SESSION_COOKIE } from "@/lib/session"
 import { isSafeToFetch } from "@/lib/security/safe-url"
 import { checkRateLimit, clientKey, extractGuard } from "@/lib/security/rate-limit"
 import { putResolve } from "@/lib/resolve-cache"
 import { VideoInfo } from "@/types"
 
 export const maxDuration = 120
+
+function attachSessionCookie(res: NextResponse, sessionId: string) {
+  res.cookies.set(SESSION_COOKIE, sessionId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  })
+}
 
 export async function POST(request: NextRequest) {
   if (!checkRateLimit(`info:${clientKey(request)}`, 20, 60_000)) {
@@ -37,8 +47,8 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const sessionId = request.cookies.get(SESSION_COOKIE)?.value ?? null
-  const cookiesPath = sessionId ? cookiesPathForPlatform(sessionId, platformKey(url)) : null
+  const { sessionId, isNew } = getOrCreateSessionId(request.cookies.get(SESSION_COOKIE)?.value)
+  const cookiesPath = cookiesPathForPlatform(sessionId, platformKey(url))
 
   try {
     const entry = await probeWithFallbacks(url, cookiesPath)
@@ -76,10 +86,12 @@ export async function POST(request: NextRequest) {
       formats,
       resolveId,
     }
-    return NextResponse.json(info)
+    const res = NextResponse.json(info)
+    if (isNew) attachSessionCookie(res, sessionId)
+    return res
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to fetch video info"
-    const failure = classifyFailure(msg)
+    const failure = classifyFailure(msg, "resolve")
     return NextResponse.json(
       { error: failure.message, category: failure.category, detail: failure.detail },
       { status: 422 }

@@ -13,6 +13,16 @@ import { DownloadResult } from "@/types"
 // give the route generous headroom above the internal extraction deadline.
 export const maxDuration = 1800
 
+function normalizeUrlForMatch(input: string): string {
+  try {
+    const u = new URL(input)
+    u.hash = ""
+    return u.toString()
+  } catch {
+    return input.trim()
+  }
+}
+
 export async function POST(request: NextRequest) {
   if (!checkRateLimit(`download:${clientKey(request)}`, 8, 60_000)) {
     return NextResponse.json({ error: "Too many download requests — please slow down and try again in a minute." }, { status: 429 })
@@ -36,10 +46,17 @@ export async function POST(request: NextRequest) {
   // it belongs to this same session (prevents one session's cookie-backed
   // resolve being replayed by another). infoJsonPath lets the download
   // skip a second full extraction via yt-dlp's --load-info-json.
+  const requestedUrl = url
   let cookiesPath: string | null = null
   let infoJsonPath: string | null = null
   const cached = resolveId ? getResolve(resolveId, sessionId) : null
   if (cached) {
+    if (requestedUrl && normalizeUrlForMatch(requestedUrl) !== normalizeUrlForMatch(cached.url)) {
+      return NextResponse.json(
+        { error: "This saved download session does not match the provided URL. Please fetch video info again." },
+        { status: 409 }
+      )
+    }
     url = cached.url
     cookiesPath = cached.cookiesPath
     infoJsonPath = cached.infoJsonPath
@@ -81,7 +98,7 @@ export async function POST(request: NextRequest) {
     const failure: ExtractionFailure =
       err instanceof Error && "failure" in err
         ? (err as Error & { failure: ExtractionFailure }).failure
-        : classifyFailure(err instanceof Error ? err.message : "Download failed")
+        : classifyFailure(err instanceof Error ? err.message : "Download failed", "download")
     return NextResponse.json(
       { error: failure.message, category: failure.category, detail: failure.detail },
       { status: 422 }

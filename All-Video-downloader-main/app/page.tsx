@@ -9,6 +9,7 @@ import { VideoCard } from "@/components/video-card"
 import { HistoryList } from "@/components/history-list"
 import { CookieSettings } from "@/components/cookie-settings"
 import { VideoInfo, HistoryItem } from "@/types"
+import { parseApiResponse } from "@/lib/client-api"
 
 const HISTORY_KEY = "vdl-history-v1"
 const PLATFORMS = ["YouTube", "TikTok", "Instagram", "X / Twitter", "Facebook", "LinkedIn", "Vimeo", "Reddit", "VK Video", "OK.ru", "+1000 more"]
@@ -90,8 +91,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: target }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? "Failed to fetch video info")
+      const data = await parseApiResponse<VideoInfo>(res)
       setInfo(data)
       setFetchedUrl(target)
     } catch (err: unknown) {
