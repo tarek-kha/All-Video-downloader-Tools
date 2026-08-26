@@ -18,6 +18,7 @@ export type FailureCategory =
   | "VIDEO_UNAVAILABLE"
   | "PRIVATE_CONTENT"
   | "LOGIN_REQUIRED"
+  | "PO_TOKEN_REQUIRED"
   | "AGE_RESTRICTED"
   | "GEO_RESTRICTED"
   | "DRM"
@@ -45,13 +46,15 @@ const CATEGORY_MESSAGES: Record<FailureCategory, string> = {
   VIDEO_UNAVAILABLE: "This video appears to be unavailable, deleted, or no longer accessible.",
   PRIVATE_CONTENT: "This video is private and cannot be downloaded without access.",
   LOGIN_REQUIRED:
-    "This video requires login verification. Add valid cookies for this platform and try again.",
+    "This video requires login. Add valid cookies for this platform and try again.",
+  PO_TOKEN_REQUIRED:
+    "This platform requires a server-side proof-of-origin (PO) token — this is not a login problem and cookies will not help. The PO-token provider must be configured on the server.",
   AGE_RESTRICTED: "This content is age-restricted and requires an authenticated account.",
   GEO_RESTRICTED:
     "This video is geo-restricted by its uploader/platform and isn't available from the server's region — this is unrelated to cookies or login.",
   DRM: "This video is DRM-protected (encrypted). Downloading it is not technically possible.",
   ANTI_BOT:
-    "The site is blocking automated access (anti-bot / CAPTCHA). Adding cookies sometimes helps.",
+    "The site is blocking automated access (anti-bot / CAPTCHA / datacenter IP block). Cookies are unlikely to fix this.",
   RATE_LIMITED: "The upstream platform rate-limited this request. Please wait and try again.",
   NO_FORMAT: "The selected format/quality is not available for this video.",
   FILE_TOO_LARGE: `This file is larger than the ${MAX_FILESIZE} limit — try a lower quality.`,
@@ -97,10 +100,18 @@ export function classifyFailure(rawMsg: string, phase: "resolve" | "download" = 
   else if (/not available in your (country|region)|geo.?restrict|geoblock|geo.?block/.test(m)) category = "GEO_RESTRICTED"
   else if (/confirm your age|age.?restrict|age.?verification/.test(m)) category = "AGE_RESTRICTED"
   else if (/private video|private content/.test(m)) category = "PRIVATE_CONTENT"
-  else if (/sign in|log ?in required|login required|authentication required|cookies-from-browser|po ?token/.test(m))
+  // PO-token: server-side proof-of-origin requirement — NOT a login/cookie issue.
+  // Must be checked before the generic login check so it gets the accurate message.
+  else if (/\bpo.?token\b/.test(m)) category = "PO_TOKEN_REQUIRED"
+  // Genuine login / session / age gating that cookies can actually fix.
+  else if (/sign in|log ?in required|login required|authentication required/.test(m))
     category = "LOGIN_REQUIRED"
+  // cookies-from-browser error means yt-dlp tried to read a browser cookie store
+  // but the server has no browser — this is a server config issue, not a user
+  // login problem.  Route to ANTI_BOT so the user isn't told to "add cookies".
+  else if (/cookies-from-browser/.test(m)) category = "ANTI_BOT"
   else if (/too many requests|rate.?limit|429/.test(m)) category = "RATE_LIMITED"
-  else if (/captcha|cloudflare|access denied|forbidden|challenge|bot/.test(m)) category = "ANTI_BOT"
+  else if (/captcha|cloudflare|access denied|forbidden|challenge|bot|datacenter/.test(m)) category = "ANTI_BOT"
   else if (/requested format is not available|no video formats|no suitable format/.test(m)) category = "NO_FORMAT"
   else if (/file is larger than max-filesize/.test(m)) category = "FILE_TOO_LARGE"
   else if (/unsupported url/.test(m)) category = "UNSUPPORTED_URL"
@@ -339,10 +350,35 @@ export async function scanPageForMedia(url: string): Promise<MediaCandidate[]> {
 type YtdlpEntry = Record<string, any>
 
 async function runProbe(args: string[], timeout: number): Promise<YtdlpEntry> {
-  const { stdout } = await execFileAsync("yt-dlp", args, {
-    maxBuffer: 64 * 1024 * 1024,
-    timeout,
-  })
+  // 4 MB is ample for a full yt-dlp info JSON (typical: 100–400 KB). A 64 MB
+  // buffer on a 512 MB Render instance causes a significant memory spike for
+  // info-heavy playlists; capping here prevents OOM crashes and keeps the
+  // health of the process stable across repeated polls.
+  const MAX_PROBE_BUFFER = 4 * 1024 * 1024
+  let stdout: string
+  try {
+    const result = await execFileAsync("yt-dlp", args, {
+      maxBuffer: MAX_PROBE_BUFFER,
+      timeout,
+    })
+    stdout = result.stdout
+  } catch (e) {
+    // Re-throw normally for timeouts and exit-code failures, but treat
+    // maxBuffer overflow as a classified error so it never surfaces as an
+    // unhandled Node crash (RangeError: stdout maxBuffer exceeded).
+    if (e instanceof Error && e.message.includes("maxBuffer")) {
+      const overflow = new Error("yt-dlp output exceeded probe buffer limit") as Error & {
+        failure: ExtractionFailure
+      }
+      overflow.failure = {
+        category: "INTERNAL_ERROR",
+        message: CATEGORY_MESSAGES["INTERNAL_ERROR"],
+        detail: "yt-dlp output exceeded probe buffer limit",
+      }
+      throw overflow
+    }
+    throw e
+  }
   const raw = JSON.parse(stdout)
   return raw?._type === "playlist" ? raw.entries?.[0] : raw
 }
@@ -361,21 +397,26 @@ export async function probeWithFallbacks(
   // rate-limits/session-rotation on some platforms. Try public/no-cookie
   // extraction first; only fall back to cookies if the public attempt
   // itself signals a login/age/private requirement.
+  // First probe gets an interactive budget (30 s) — enough for normal sites
+  // to respond before the user gives up waiting. Later fallbacks get longer
+  // budgets because they're only reached when the first attempt genuinely
+  // failed (never speculative/parallel). Total worst-case budget stays well
+  // under the original 75 s + 60 s + 60 s + 45 s = 240 s.
   try {
-    return await runProbe([...noCookieBase, url], 75_000)
+    return await runProbe([...noCookieBase, url], 30_000)
   } catch (e) {
     errors.push(e instanceof Error ? e.message : String(e))
   }
   if (cookiesPath) {
     try {
-      return await runProbe([...withCookieBase, url], 60_000)
+      return await runProbe([...withCookieBase, url], 45_000)
     } catch (e) {
       errors.push(e instanceof Error ? e.message : String(e))
     }
   }
   if (await canImpersonate()) {
     try {
-      return await runProbe([...withCookieBase, "--impersonate", "chrome", url], 60_000)
+      return await runProbe([...withCookieBase, "--impersonate", "chrome", url], 45_000)
     } catch (e) {
       errors.push(e instanceof Error ? e.message : String(e))
     }
@@ -429,17 +470,53 @@ export interface DownloadSuccess {
   durationSec?: number
 }
 
-async function pickLargest(dir: string): Promise<{ name: string; size: number } | null> {
+/**
+ * Prefer the true merged output file — the one whose name does NOT contain
+ * a yt-dlp format-id suffix (`.fNNN.`) and is not a partial/temp artifact
+ * (`.part`, `.ytdl`, `.temp`). Falls back to the largest file if no merged
+ * candidate is found, which handles single-stream downloads (e.g. direct MP4
+ * URLs or genuine no-DASH sources) that never produce a `.fNNN.` fragment.
+ */
+export async function pickOutput(dir: string): Promise<{ name: string; size: number } | null> {
   let files: string[] = []
   try {
     files = await fs.readdir(dir)
   } catch {
     return null
   }
-  let best: { name: string; size: number } | null = null
-  for (const f of files) {
+
+  // Exclude partial/temp artifacts that yt-dlp writes during download.
+  const ARTIFACT_RE = /\.(?:part|ytdl|temp)$/i
+  // Format-fragment suffix produced by yt-dlp before ffmpeg merges them
+  // e.g. "Title.f399.mp4" or "Title.f251.webm"
+  const FRAGMENT_RE = /\.\bf\d{2,5}\b\.[^.]+$/
+
+  const candidates = files.filter((f) => !ARTIFACT_RE.test(f))
+  const merged = candidates.filter((f) => !FRAGMENT_RE.test(f))
+
+  // Helper: stat and return { name, size } or null
+  const stat = async (f: string) => {
     const st = await fs.stat(path.join(dir, f)).catch(() => null)
-    if (st && st.isFile() && (!best || st.size > best.size)) best = { name: f, size: st.size }
+    return st?.isFile() ? { name: f, size: st.size } : null
+  }
+
+  if (merged.length > 0) {
+    // Among merged candidates, pick the largest (handles the case of multiple
+    // completed single-stream downloads where all files lack a .fNNN suffix).
+    let best: { name: string; size: number } | null = null
+    for (const f of merged) {
+      const s = await stat(f)
+      if (s && (!best || s.size > best.size)) best = s
+    }
+    if (best) return best
+  }
+
+  // No merged file — fall back to largest overall (e.g. video-only fragment
+  // on a source that genuinely has no audio).
+  let best: { name: string; size: number } | null = null
+  for (const f of candidates) {
+    const s = await stat(f)
+    if (s && (!best || s.size > best.size)) best = s
   }
   return best
 }
@@ -497,7 +574,7 @@ export async function downloadWithFallbacks(opts: {
   const withCookieBase = [...commonBase, ...cookieArgs(cookiesPath)]
   const errors: string[] = []
 
-  const tryAttempt = async (method: string, args: string[], timeout: number): Promise<DownloadSuccess | null> => {
+  const tryAttempt = async (method: string, args: string[], timeout: number, allowVideoOnly = false): Promise<DownloadSuccess | null> => {
     if (timeLeft() < 25_000) return null
     try {
       await execFileAsync("yt-dlp", args, {
@@ -509,7 +586,7 @@ export async function downloadWithFallbacks(opts: {
       await wipeDir(dir)
       return null
     }
-    const best = await pickLargest(dir)
+    const best = await pickOutput(dir)
     if (!best) {
       errors.push(`${method}: produced no file`)
       return null
@@ -520,8 +597,36 @@ export async function downloadWithFallbacks(opts: {
       await wipeDir(dir)
       return null
     }
+    // For video requests: require both video AND audio streams, unless the
+    // source is known to have no audio at all (e.g. silent clips, GIF-style).
+    if (!audioOnly && check.hasVideo && !check.hasAudio && !allowVideoOnly) {
+      errors.push(`${method}: rejected video-only output (missing audio track)`)
+      await fs.rm(path.join(dir, best.name), { force: true }).catch(() => {})
+      return null
+    }
+    // For audio-only requests: must have at least an audio stream.
+    if (audioOnly && !check.hasAudio) {
+      errors.push(`${method}: rejected output without audio stream`)
+      await fs.rm(path.join(dir, best.name), { force: true }).catch(() => {})
+      return null
+    }
     return { filename: best.name, sizeBytes: best.size, method, durationSec: check.durationSec }
   }
+
+  // Detect whether the source genuinely has no audio at all (e.g. silent clip,
+  // GIF-style post) so we can skip the missing-audio rejection for those.
+  // Reads the cached info.json if available; returns false when unknown.
+  const sourceHasNoAudio = await (async (): Promise<boolean> => {
+    if (!infoJsonPath) return false
+    try {
+      const raw = JSON.parse(await fs.readFile(infoJsonPath, "utf8"))
+      const formats: Array<{ acodec?: string }> = Array.isArray(raw?.formats) ? raw.formats : []
+      if (formats.length === 0) return false
+      return formats.every((f) => !f.acodec || f.acodec === "none")
+    } catch {
+      return false
+    }
+  })()
 
   // If a specific height/quality selector isn't available for this site,
   // fall back to plain best/worst rather than failing outright.
@@ -538,27 +643,28 @@ export async function downloadWithFallbacks(opts: {
     const r0 = await tryAttempt(
       "cached-info-json",
       [...robust(noCookieBase), "--load-info-json", infoJsonPath],
-      10 * 60 * 1000
+      10 * 60 * 1000,
+      sourceHasNoAudio
     )
     if (r0) return r0
   }
 
   // 1. Native extractor, no cookies first (avoids unnecessarily forcing a
   // saved login session onto plainly public content).
-  let r = await tryAttempt("native", [...robust(noCookieBase), url], 20 * 60 * 1000)
+  let r = await tryAttempt("native", [...robust(noCookieBase), url], 20 * 60 * 1000, sourceHasNoAudio)
   if (r) return r
   // 2. Native + cookies (only if the visitor has saved cookies for this platform)
   if (cookiesPath) {
-    r = await tryAttempt("native-cookie", [...robust(withCookieBase), url], 15 * 60 * 1000)
+    r = await tryAttempt("native-cookie", [...robust(withCookieBase), url], 15 * 60 * 1000, sourceHasNoAudio)
     if (r) return r
   }
   // 3. Native + browser TLS impersonation (beats many anti-bot walls)
   if (await canImpersonate()) {
-    r = await tryAttempt("impersonate", [...robust(withCookieBase), "--impersonate", "chrome", url], 15 * 60 * 1000)
+    r = await tryAttempt("impersonate", [...robust(withCookieBase), "--impersonate", "chrome", url], 15 * 60 * 1000, sourceHasNoAudio)
     if (r) return r
   }
   // 4. Generic extractor
-  r = await tryAttempt("generic", [...robust(withCookieBase), "--force-generic-extractor", url], 10 * 60 * 1000)
+  r = await tryAttempt("generic", [...robust(withCookieBase), "--force-generic-extractor", url], 10 * 60 * 1000, sourceHasNoAudio)
   if (r) return r
   // 5. Page scan → direct/HLS/DASH candidates
   const candidates = await scanPageForMedia(url).catch(() => [] as MediaCandidate[])
@@ -572,7 +678,8 @@ export async function downloadWithFallbacks(opts: {
     r = await tryAttempt(
       `page-scan:${c.kind}`,
       [...fmt, ...withCookieBase, ...refArgs, c.url],
-      8 * 60 * 1000
+      8 * 60 * 1000,
+      sourceHasNoAudio
     )
     if (r) {
       // Suspiciously short & tiny files are usually preview/teaser/ad
