@@ -1,6 +1,6 @@
 import path from "path"
 import { promises as fs } from "fs"
-import { execFileAsync, cookieArgs, MAX_FILESIZE } from "./ytdlp"
+import { execFileAsync, cookieArgs, MAX_FILESIZE, proxyArgs, hasProxy } from "./ytdlp"
 import { validateMediaFile } from "./validate"
 import { safeFetch, readLimited, UnsafeUrlError } from "./security/safe-fetch"
 
@@ -407,6 +407,15 @@ export async function probeWithFallbacks(
   } catch (e) {
     errors.push(e instanceof Error ? e.message : String(e))
   }
+  // Proxy fallback: datacenter-IP blocks (YouTube "Sign in to confirm...",
+  // X guest-token walls) usually disappear behind a residential IP.
+  if (hasProxy()) {
+    try {
+      return await runProbe([...noCookieBase, ...proxyArgs(), url], 45_000)
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e))
+    }
+  }
   if (cookiesPath) {
     try {
       return await runProbe([...withCookieBase, url], 45_000)
@@ -653,6 +662,13 @@ export async function downloadWithFallbacks(opts: {
   // saved login session onto plainly public content).
   let r = await tryAttempt("native", [...robust(noCookieBase), url], 20 * 60 * 1000, sourceHasNoAudio)
   if (r) return r
+  // 1b. Native + proxy — same extractor, but through a residential IP.
+  // Placed before cookies/impersonate because IP-blocks are the most
+  // common failure on datacenter hosting.
+  if (hasProxy()) {
+    r = await tryAttempt("native-proxy", [...robust(noCookieBase), ...proxyArgs(), url], 15 * 60 * 1000, sourceHasNoAudio)
+    if (r) return r
+  }
   // 2. Native + cookies (only if the visitor has saved cookies for this platform)
   if (cookiesPath) {
     r = await tryAttempt("native-cookie", [...robust(withCookieBase), url], 15 * 60 * 1000, sourceHasNoAudio)

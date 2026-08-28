@@ -34,6 +34,24 @@ export function cookieArgs(cookiesPath: string | null | undefined): string[] {
   return cookiesPath && existsSync(cookiesPath) ? ["--cookies", cookiesPath] : []
 }
 
+// Optional outbound proxy (e.g. residential proxies for platforms that block
+// datacenter IPs like Render's). Set PROXY_URL in Render env vars.
+// Supports multiple proxies separated by commas — one is picked at random
+// per attempt, which spreads load across the proxy pool.
+// Format: http://user:pass@host:port  (socks5:// also works)
+export function proxyArgs(): string[] {
+  const raw = process.env.PROXY_URL?.trim()
+  if (!raw) return []
+  const list = raw.split(",").map((s) => s.trim()).filter(Boolean)
+  if (list.length === 0) return []
+  const pick = list[Math.floor(Math.random() * list.length)]
+  return ["--proxy", pick]
+}
+
+export function hasProxy(): boolean {
+  return !!process.env.PROXY_URL?.trim()
+}
+
 export function isValidUrl(input: string): boolean {
   try {
     const u = new URL(input)
