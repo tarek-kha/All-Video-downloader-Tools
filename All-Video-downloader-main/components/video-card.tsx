@@ -137,16 +137,16 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
       <button
         onClick={() => handleDownload(value)}
         disabled={downloadingQuality !== null}
-        className="group flex flex-col items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-card px-2 py-4 transition-all hover:border-primary hover:bg-accent/40 hover:gold-glow-sm active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+        className="group flex flex-col items-center justify-center gap-0.5 rounded-lg border border-primary/30 bg-card px-1.5 py-2 transition-all hover:border-primary hover:bg-accent/40 hover:gold-glow-sm active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
       >
-        <span className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">
+        <span className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">
           {SHORT_LABELS[value] ?? value}
         </span>
-        <span className="text-[11px] text-muted-foreground uppercase tracking-wider">{ext}</span>
+        <span className="text-[9px] text-muted-foreground uppercase tracking-wider">{ext}</span>
         {busy ? (
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
         ) : (
-          <Download className="h-4 w-4 text-primary" />
+          <Download className="h-3.5 w-3.5 text-primary" />
         )}
       </button>
     )
@@ -241,13 +241,13 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
         </div>
 
         {/* Format grids */}
-        <div className="p-4 space-y-4">
+        <div className="p-3 space-y-3">
           {tab === "video" && (
             <>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                 <Film className="h-3.5 w-3.5" /> Video Formats
               </p>
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {videoFormats.map((f) => (
                   <FormatBox key={f.value} value={f.value} ext="MP4" />
                 ))}
@@ -261,7 +261,7 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
                 <Music className="h-3.5 w-3.5" /> Audio Formats
               </p>
               {audioFormats.length > 0 ? (
-                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                   {audioFormats.map((f) => (
                     <FormatBox key={f.value} value={f.value} ext="MP3" />
                   ))}
@@ -280,13 +280,13 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
               {thumbHref ? (
                 <a
                   href={thumbHref}
-                  className="group flex flex-col items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-card px-2 py-4 transition-all hover:border-primary hover:bg-accent/40 hover:gold-glow-sm active:scale-95 w-32"
+                  className="group flex flex-col items-center justify-center gap-1.5 rounded-lg border border-primary/30 bg-card px-1.5 py-2 transition-all hover:border-primary hover:bg-accent/40 hover:gold-glow-sm active:scale-95 w-28"
                 >
-                  <span className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">
+                  <span className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">
                     Thumbnail
                   </span>
-                  <span className="text-[11px] text-muted-foreground uppercase tracking-wider">JPG</span>
-                  <Download className="h-4 w-4 text-primary" />
+                  <span className="text-[9px] text-muted-foreground uppercase tracking-wider">JPG</span>
+                  <Download className="h-3.5 w-3.5 text-primary" />
                 </a>
               ) : (
                 <p className="text-sm text-muted-foreground">No thumbnail available for this video.</p>
