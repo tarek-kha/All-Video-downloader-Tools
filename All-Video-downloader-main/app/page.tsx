@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import {
   Link2,
   Loader2,
-  Video,
   Download,
   ClipboardPaste,
   X,
@@ -17,20 +15,20 @@ import {
 import { VideoCard } from "@/components/video-card"
 import { HistoryList } from "@/components/history-list"
 import { CookieSettings } from "@/components/cookie-settings"
+import { BRANDS, BrandIcon } from "@/components/platform-logos"
 import { VideoInfo, HistoryItem } from "@/types"
 import { parseApiResponse } from "@/lib/client-api"
 
 const HISTORY_KEY = "vdl-history-v1"
-const PLATFORMS = [
-  "YouTube",
-  "TikTok",
-  "Instagram",
-  "X / Twitter",
-  "Facebook",
-  "Vimeo",
-  "Reddit",
-  "+1000 more",
-]
+const PLATFORM_KEYS = [
+  "youtube",
+  "tiktok",
+  "instagram",
+  "x",
+  "facebook",
+  "vimeo",
+  "reddit",
+] as const
 
 export default function HomePage() {
   const [tab, setTab] = useState<"home" | "history">("home")
@@ -118,55 +116,54 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-20">
       {/* Top bar */}
-      <div className="container mx-auto max-w-2xl px-4 pt-4 flex justify-end">
+      <div className="container mx-auto max-w-2xl px-4 pt-2.5 flex justify-end">
         <CookieSettings />
       </div>
 
       {tab === "home" ? (
-        <main className="container mx-auto max-w-2xl px-4 pt-6 space-y-7">
-          {/* Hero */}
-          <div className="text-center space-y-4">
-            <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl border border-primary/40 bg-primary/10 gold-glow">
-              <Video className="h-8 w-8 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-gold-gradient leading-tight">
-                All-in-One
-                <br />
-                Video Downloader
-              </h1>
-              <p className="text-muted-foreground mt-3 text-sm sm:text-base">
-                Paste a video link from any platform and
-                <br className="sm:hidden" /> download in different qualities.
-              </p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-2 pt-1">
-              {PLATFORMS.map((p) => (
-                <Badge
-                  key={p}
-                  variant="outline"
-                  className="font-normal border-primary/30 text-foreground/80 px-3 py-1"
+        <main className="container mx-auto max-w-2xl px-4 pt-2 space-y-4">
+          {/* Hero: logo → subtitle → platform pills */}
+          <div className="text-center space-y-2.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.png"
+              alt="VidSaver"
+              className="mx-auto h-16 sm:h-20 w-auto select-none drop-shadow-[0_4px_18px_rgba(250,204,21,0.25)]"
+              draggable={false}
+            />
+            <p className="text-muted-foreground text-xs sm:text-sm">
+              Paste a video link from any platform and download in different qualities.
+            </p>
+            <div className="flex flex-wrap justify-center gap-1.5">
+              {PLATFORM_KEYS.map((key) => (
+                <span
+                  key={key}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-card/60 px-2.5 py-1 text-[11px] font-medium text-foreground/80"
                 >
-                  {p}
-                </Badge>
+                  <BrandIcon brand={key} className="h-3.5 w-3.5" />
+                  {BRANDS[key].label}
+                </span>
               ))}
+              <span className="inline-flex items-center rounded-full border border-primary/30 bg-card/60 px-2.5 py-1 text-[11px] font-medium text-primary">
+                +1000 more
+              </span>
             </div>
           </div>
 
           {/* URL input + Download (fetch) button */}
-          <form onSubmit={handleFetch} className="space-y-3">
+          <form onSubmit={handleFetch} className="space-y-2.5">
             <div className="relative">
-              <Link2 className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-primary" />
+              <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary" />
               <Input
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="Paste video link here..."
-                className="h-14 text-base pl-11 pr-20 rounded-xl border-primary/30 bg-card focus-visible:ring-primary/50"
+                className="h-11 text-sm pl-9 pr-16 rounded-xl border-primary/30 bg-card focus-visible:ring-primary/50"
                 autoFocus
               />
-              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
                 <button
                   type="button"
                   onClick={handlePaste}
@@ -190,19 +187,19 @@ export default function HomePage() {
             <button
               type="submit"
               disabled={loading || !url.trim()}
-              className="w-full h-14 rounded-xl bg-gradient-to-b from-amber-300 via-yellow-500 to-amber-600 text-[#1a1206] font-extrabold text-lg tracking-wide gold-glow-sm hover:brightness-110 active:brightness-95 transition-all disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
+              className="w-full h-11 rounded-xl bg-gradient-to-b from-amber-300 via-yellow-500 to-amber-600 text-[#1a1206] font-extrabold text-base tracking-wide gold-glow-sm hover:brightness-110 active:brightness-95 transition-all disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
             >
               {loading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Download className="h-5 w-5" />
+                <Download className="h-4 w-4" />
               )}
               {loading ? "FETCHING…" : "DOWNLOAD"}
             </button>
           </form>
 
           {error && (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">
               {error}
             </div>
           )}
@@ -219,33 +216,31 @@ export default function HomePage() {
 
           {/* Empty state */}
           {!info && !loading && !error && (
-            <div className="rounded-2xl border border-border bg-card/50 px-4 py-10 text-center space-y-3">
-              <Inbox className="h-10 w-10 mx-auto text-muted-foreground/50" />
-              <p className="text-muted-foreground text-sm">
-                No downloads yet
-                <br />
-                <span className="text-xs">Your downloaded videos will appear in History.</span>
+            <div className="rounded-2xl border border-border bg-card/50 px-4 py-6 text-center space-y-2">
+              <Inbox className="h-8 w-8 mx-auto text-muted-foreground/50" />
+              <p className="text-muted-foreground text-xs">
+                No downloads yet — your downloaded videos will appear in History.
               </p>
             </div>
           )}
 
-          <p className="text-center text-xs text-muted-foreground/70 pt-2">
+          <p className="text-center text-[10px] text-muted-foreground/60">
             Only download content you have the right to save. Respect each platform&apos;s
             terms of service and copyright law.
           </p>
         </main>
       ) : (
-        <main className="container mx-auto max-w-2xl px-4 pt-6 space-y-4">
-          <h2 className="text-xl font-bold flex items-center gap-2">
+        <main className="container mx-auto max-w-2xl px-4 pt-4 space-y-4">
+          <h2 className="text-lg font-bold flex items-center gap-2">
             <Clock className="h-5 w-5 text-primary" /> Download History
             <span className="text-sm font-normal text-muted-foreground">
               ({history.length})
             </span>
           </h2>
           {history.length === 0 ? (
-            <div className="rounded-2xl border border-border bg-card/50 px-4 py-10 text-center space-y-3">
-              <Inbox className="h-10 w-10 mx-auto text-muted-foreground/50" />
-              <p className="text-muted-foreground text-sm">
+            <div className="rounded-2xl border border-border bg-card/50 px-4 py-8 text-center space-y-2">
+              <Inbox className="h-8 w-8 mx-auto text-muted-foreground/50" />
+              <p className="text-muted-foreground text-xs">
                 Nothing here yet — downloaded videos will show up in this list.
               </p>
             </div>
@@ -264,26 +259,26 @@ export default function HomePage() {
         <div className="container mx-auto max-w-2xl flex">
           <button
             onClick={() => setTab("home")}
-            className={`flex-1 flex flex-col items-center gap-1 py-3 text-xs font-medium transition-colors ${
+            className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
               tab === "home" ? "text-primary" : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <Home className="h-5 w-5" />
+            <Home className="h-4 w-4" />
             Home
             <span
-              className={`h-0.5 w-10 rounded-full transition-colors ${
+              className={`h-0.5 w-8 rounded-full transition-colors ${
                 tab === "home" ? "bg-primary" : "bg-transparent"
               }`}
             />
           </button>
           <button
             onClick={() => setTab("history")}
-            className={`flex-1 flex flex-col items-center gap-1 py-3 text-xs font-medium transition-colors relative ${
+            className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium transition-colors relative ${
               tab === "history" ? "text-primary" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <span className="relative">
-              <Clock className="h-5 w-5" />
+              <Clock className="h-4 w-4" />
               {history.length > 0 && (
                 <span className="absolute -top-1.5 -right-2.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                   {history.length}
@@ -292,7 +287,7 @@ export default function HomePage() {
             </span>
             History
             <span
-              className={`h-0.5 w-10 rounded-full transition-colors ${
+              className={`h-0.5 w-8 rounded-full transition-colors ${
                 tab === "history" ? "bg-primary" : "bg-transparent"
               }`}
             />

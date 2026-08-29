@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "All-in-One Video Downloader",
+  title: "VidSaver",
   description: "Works with thousands of public video websites using multiple extraction methods. Support depends on website protection and availability.",
 };
 
