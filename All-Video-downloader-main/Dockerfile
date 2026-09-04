@@ -17,8 +17,12 @@ RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y \
 # yt-dlp[default] (includes yt-dlp-ejs) + curl_cffi (Chrome TLS
 # impersonation), in an isolated venv to avoid Debian's
 # externally-managed-environment restriction.
+# PINNED to a stable release on purpose: --pre nightlies ship broken
+# extractors (e.g. OK.ru broke with "the JSON object must be str..." in
+# the 2026.08.27+ nightlies). Bump this version manually when a newer
+# stable is released.
 RUN python3 -m venv /opt/ytdlp-venv \
-    && /opt/ytdlp-venv/bin/pip install --no-cache-dir -U --pre "yt-dlp[default]" curl_cffi \
+    && /opt/ytdlp-venv/bin/pip install --no-cache-dir "yt-dlp[default]==2026.8.19" curl_cffi \
     && ln -s /opt/ytdlp-venv/bin/yt-dlp /usr/local/bin/yt-dlp
 
 # OPTIONAL: YouTube PO-Token provider (bgutil-ytdlp-pot-provider, script
