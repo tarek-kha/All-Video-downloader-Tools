@@ -34,6 +34,7 @@ export default function HomePage() {
   const [tab, setTab] = useState<"home" | "history">("home")
   const [url, setUrl] = useState("")
   const [loading, setLoading] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<VideoInfo | null>(null)
   const [fetchedUrl, setFetchedUrl] = useState("")
@@ -46,6 +47,18 @@ export default function HomePage() {
     } catch {
       // ignore corrupt history
     }
+  }, [])
+
+  // Render free instances sleep after ~15 min of inactivity; the first request
+  // to a sleeping instance can hang 50+ s and mobile browsers give up with a
+  // bare "Failed to fetch". Ping the cheap health endpoint as soon as the page
+  // opens so the server is awake BEFORE the user hits Download, and keep it
+  // warm with a lightweight ping every 10 minutes while the tab stays open.
+  useEffect(() => {
+    const ping = () => fetch("/api/health").catch(() => {})
+    ping()
+    const id = setInterval(ping, 10 * 60 * 1000)
+    return () => clearInterval(id)
   }, [])
 
   const saveHistory = useCallback((items: HistoryItem[]) => {
@@ -97,21 +110,45 @@ export default function HomePage() {
     const target = url.trim()
     if (!target) return
     setLoading(true)
+    setRetrying(false)
     setError(null)
     setInfo(null)
-    try {
-      const res = await fetch("/api/info", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: target }),
-      })
-      const data = await parseApiResponse<VideoInfo>(res)
-      setInfo(data)
-      setFetchedUrl(target)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong")
-    } finally {
-      setLoading(false)
+    let lastErr: unknown = null
+    // Up to 3 attempts. Only raw network failures ("Failed to fetch" = the
+    // browser got NO response at all, e.g. cold-start hang or a connection
+    // drop) are retried; real server errors are shown immediately.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch("/api/info", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: target }),
+        })
+        const data = await parseApiResponse<VideoInfo>(res)
+        setInfo(data)
+        setFetchedUrl(target)
+        lastErr = null
+        break
+      } catch (err: unknown) {
+        lastErr = err
+        const msg = err instanceof Error ? err.message : ""
+        if (msg === "Failed to fetch" && attempt < 2) {
+          setRetrying(true)
+          await new Promise((r) => setTimeout(r, 6000))
+          continue
+        }
+        break
+      }
+    }
+    setRetrying(false)
+    setLoading(false)
+    if (lastErr) {
+      const msg = lastErr instanceof Error ? lastErr.message : "Something went wrong"
+      setError(
+        msg === "Failed to fetch"
+          ? "Could not reach the server — it may be waking up from sleep. Wait ~30 seconds and press DOWNLOAD again."
+          : msg
+      )
     }
   }
 
@@ -194,7 +231,7 @@ export default function HomePage() {
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              {loading ? "FETCHING…" : "DOWNLOAD"}
+              {loading ? (retrying ? "WAKING UP SERVER…" : "FETCHING…") : "DOWNLOAD"}
             </button>
           </form>
 
