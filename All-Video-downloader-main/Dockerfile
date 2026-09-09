@@ -14,16 +14,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y \
     && ln -s /root/.deno/bin/deno /usr/local/bin/deno
 
-# yt-dlp[default] (includes yt-dlp-ejs) + curl_cffi (Chrome TLS
-# impersonation), in an isolated venv to avoid Debian's
-# externally-managed-environment restriction.
-# PINNED to a stable release on purpose: --pre nightlies ship broken
-# extractors (e.g. OK.ru broke with "the JSON object must be str..." in
-# the 2026.08.27+ nightlies). Bump this version manually when a newer
-# stable is released.
+# yt-dlp installed from the GitHub MASTER branch (tarball — plain HTTPS
+# download, no git needed) — the current, strongest version: brand-new
+# extractor fixes for ALL sites land here first (weeks before they reach a
+# stable release). yt-dlp[default] includes yt-dlp-ejs (JS challenge
+# solving) + curl_cffi (Chrome TLS impersonation). Installed in an isolated
+# venv to avoid Debian's externally-managed-environment restriction.
+# Rebuilt fresh on every deploy, so the site always runs the newest code.
 RUN python3 -m venv /opt/ytdlp-venv \
-    && /opt/ytdlp-venv/bin/pip install --no-cache-dir "yt-dlp[default]==2026.8.19" curl_cffi \
+    && /opt/ytdlp-venv/bin/pip install --no-cache-dir "yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp/archive/refs/heads/master.tar.gz" \
     && ln -s /opt/ytdlp-venv/bin/yt-dlp /usr/local/bin/yt-dlp
+
+# TEMPORARY WORKAROUND for yt-dlp issue #17585: OK.ru changed their site and
+# now sends flashvars.metadata already JSON-parsed (a dict), which crashes
+# the extractor with "the JSON object must be str, bytes or bytearray, not
+# dict". Skip the second parse when metadata is already a dict. Best-effort:
+# once upstream fixes it, this patch silently no-ops. (Patch verified against
+# master + stable 2026.08.19: applies cleanly and compiles.)
+RUN /opt/ytdlp-venv/bin/python -c "import glob; m=glob.glob('/opt/ytdlp-venv/lib/python3*/site-packages/yt_dlp/extractor/odnoklassniki.py'); p=m[0]; s=open(p).read(); old='        if metadata:\n            metadata = self._parse_json(metadata, video_id)'; new='        if isinstance(metadata, str):\n            metadata = self._parse_json(metadata, video_id)'; open(p,'w').write(s.replace(old,new)) if old in s else print('WARN: ok.ru patch skipped (already fixed upstream?)')"
 
 # OPTIONAL: YouTube PO-Token provider (bgutil-ytdlp-pot-provider, script
 # mode). yt-dlp only calls this when its own logic decides a specific
