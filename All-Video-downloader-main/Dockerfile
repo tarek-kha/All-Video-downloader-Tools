@@ -31,7 +31,7 @@ RUN python3 -m venv /opt/ytdlp-venv \
 # dict". Skip the second parse when metadata is already a dict. Best-effort:
 # once upstream fixes it, this patch silently no-ops. (Patch verified against
 # master + stable 2026.08.19: applies cleanly and compiles.)
-RUN /opt/ytdlp-venv/bin/python -c "import glob; m=glob.glob('/opt/ytdlp-venv/lib/python3*/site-packages/yt_dlp/extractor/odnoklassniki.py'); p=m[0]; s=open(p).read(); old='        if metadata:\n            metadata = self._parse_json(metadata, video_id)'; new='        if isinstance(metadata, str):\n            metadata = self._parse_json(metadata, video_id)'; open(p,'w').write(s.replace(old,new)) if old in s else print('WARN: ok.ru patch skipped (already fixed upstream?)')"
+RUN /opt/ytdlp-venv/bin/python -c "import glob; m=glob.glob('/opt/ytdlp-venv/lib/python3*/site-packages/yt_dlp/extractor/odnoklassniki.py'); p=m[0]; s=open(p).read(); old='        if metadata:\n            metadata = self._parse_json(metadata, video_id)'; new='        if metadata:\n            if isinstance(metadata, str):\n                metadata = self._parse_json(metadata, video_id)'; open(p,'w').write(s.replace(old,new)) if old in s else print('WARN: ok.ru patch skipped (already fixed upstream?)')"
 
 # OPTIONAL: YouTube PO-Token provider (bgutil-ytdlp-pot-provider, script
 # mode). yt-dlp only calls this when its own logic decides a specific
