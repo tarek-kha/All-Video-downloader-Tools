@@ -34,27 +34,28 @@ RUN python3 -m venv /opt/ytdlp-venv \
 RUN /opt/ytdlp-venv/bin/python -c "import glob; m=glob.glob('/opt/ytdlp-venv/lib/python3*/site-packages/yt_dlp/extractor/odnoklassniki.py'); p=m[0]; s=open(p).read(); old='        if metadata:\n            metadata = self._parse_json(metadata, video_id)'; new='        if metadata:\n            if isinstance(metadata, str):\n                metadata = self._parse_json(metadata, video_id)'; open(p,'w').write(s.replace(old,new)) if old in s else print('WARN: ok.ru patch skipped (already fixed upstream?)')"
 
 # OPTIONAL: YouTube PO-Token provider (bgutil-ytdlp-pot-provider, script
-# mode). yt-dlp only calls this when its own logic decides a specific
-# client/format actually requires a proof-of-origin token — normal public,
-# no-cookie extraction is completely unaffected and always tried first.
+# mode — yt-dlp invokes the built script directly; no always-on server).
+# yt-dlp only calls this when its own logic decides a specific client/format
+# actually requires a proof-of-origin token — normal public, no-cookie
+# extraction is completely unaffected and always tried first.
 #
-# BGUTIL_POT_VERSION is the SINGLE source of truth: it pins the git tag
-# cloned/built below AND the exact pip plugin version installed, and is
-# exported as PO_PROVIDER_VERSION so app/lib/health.ts's runtime check can
-# confirm the installed plugin actually matches the built server script
-# instead of silently drifting apart.
+# v2.0.0: fixes RCE advisory GHSA-qpv9-8xfj-xx9m (server-binding issue;
+# we use script mode, but stay current anyway). BGUTIL_POT_VERSION is the
+# SINGLE source of truth: it pins the downloaded server tag AND the exact
+# pip plugin version, and is exported as PO_PROVIDER_VERSION so
+# app/lib/health.ts's runtime check can confirm both match instead of
+# silently drifting apart.
 #
-# Best-effort: if this step fails for any reason (network hiccup, native
-# `canvas` build issue, etc.) the build continues WITHOUT it rather than
-# failing the whole deploy, since it's a fallback, not a requirement.
-ARG BGUTIL_POT_VERSION=1.3.2
+# Robustness changes vs the old version: tarball download instead of git
+# clone (git protocol is flaky in some build networks), and numbered echo
+# markers so the exact failing step is visible in the build log.
+#
+# Best-effort: if any step fails (network hiccup, native `canvas` build
+# issue, etc.) the build continues WITHOUT it rather than failing the whole
+# deploy, since it's a fallback, not a requirement.
+ARG BGUTIL_POT_VERSION=2.0.0
 ENV PO_PROVIDER_VERSION=${BGUTIL_POT_VERSION}
-RUN ( git clone --depth 1 --branch ${BGUTIL_POT_VERSION} https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /root/bgutil-ytdlp-pot-provider \
-      && cd /root/bgutil-ytdlp-pot-provider/server \
-      && npm ci \
-      && npx tsc \
-      && /opt/ytdlp-venv/bin/pip install --no-cache-dir "bgutil-ytdlp-pot-provider==${BGUTIL_POT_VERSION}" ) \
-    || echo "WARN: optional YouTube PO-token provider setup failed — continuing without it (public extraction is unaffected)"
+RUN echo "[pot] 1/4 download server ${BGUTIL_POT_VERSION}"       && curl -fsSL -o /tmp/pot-provider.tar.gz "https://codeload.github.com/Brainicism/bgutil-ytdlp-pot-provider/tar.gz/refs/tags/${BGUTIL_POT_VERSION}"       && mkdir -p /root/bgutil-ytdlp-pot-provider       && tar xzf /tmp/pot-provider.tar.gz -C /root/bgutil-ytdlp-pot-provider --strip-components=1       && echo "[pot] 2/4 npm ci (native canvas build)"       && cd /root/bgutil-ytdlp-pot-provider/server       && npm ci --no-audit --no-fund       && echo "[pot] 3/4 tsc transpile"       && npx tsc       && echo "[pot] 4/4 pip plugin ${BGUTIL_POT_VERSION}"       && /opt/ytdlp-venv/bin/pip install --no-cache-dir "bgutil-ytdlp-pot-provider==${BGUTIL_POT_VERSION}"       && echo "[pot] setup complete"     || echo "WARN: optional YouTube PO-token provider setup failed — continuing without it (public extraction is unaffected)"
 
 # This app always runs behind exactly one trusted reverse proxy in
 # production (Render's own edge load balancer), so it's safe to trust the
