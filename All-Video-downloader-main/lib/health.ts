@@ -77,7 +77,11 @@ const PO_EXPECTED_VERSION = process.env.PO_PROVIDER_VERSION || "1.3.2"
  * without it (normal public extraction is unaffected either way).
  */
 export async function checkPoProviderAvailable(): Promise<boolean> {
-  const pipOutput = await runCommand(PO_VENV_PYTHON, ["-m", "pip", "show", PO_PACKAGE_NAME], 5000)
+  // NOTE: keep this at YTDLP_HEALTH_TIMEOUT_MS (15s), not a short timeout.
+  // On Render free (0.1 CPU) a cold Python venv takes 5-10s just to run
+  // `pip show` — a shorter timeout makes the health check report a false
+  // negative even when the provider is installed correctly.
+  const pipOutput = await runCommand(PO_VENV_PYTHON, ["-m", "pip", "show", PO_PACKAGE_NAME], YTDLP_HEALTH_TIMEOUT_MS)
   const scriptBuilt = existsSync(PO_SCRIPT_PATH)
   if (!pipOutput || !scriptBuilt) return false
   const versionMatch = /^Version:\s*(\S+)/m.exec(pipOutput)
