@@ -79,8 +79,6 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
     setError(null)
     setDone(null)
 
-    // Instant feedback: add the history item right away, before the network
-    // request even starts, so the user sees it appear immediately.
     const historyId = crypto.randomUUID()
     onQueued({
       id: historyId,
@@ -96,12 +94,37 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
     })
 
     try {
+      // PHASE 1: Try direct CDN link (zero Render bandwidth)
+      const directRes = await fetch("/api/direct", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: sourceUrl, quality, resolveId: info.resolveId }),
+      })
+      const directData = await parseApiResponse<{ success: boolean; directUrl: string | null; ext?: string }>(directRes)
+
+      if (directData.success && directData.directUrl) {
+        // Direct link works! Browser downloads straight from CDN.
+        const a = document.createElement("a")
+        a.href = directData.directUrl
+        a.target = "_blank"
+        a.download = `${info.title.slice(0, 80).replace(/[^a-z0-9\u0980-\u09FF]+/gi, "_")}.${directData.ext || "mp4"}`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+
+        onSettled(historyId, {
+          filename: `direct.${directData.ext || "mp4"}`,
+          fileId: "direct",
+          status: "complete",
+        })
+        setDownloadingQuality(null)
+        return
+      }
+
+      // PHASE 2: Fall back to server-side download (consumes Render bandwidth)
       const res = await fetch("/api/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Send the resolveId from /api/info's response when available so the
-        // server can reuse the already-resolved context (Phase 2) instead of
-        // re-deriving platform/cookie info from the raw URL again.
         body: JSON.stringify({ url: sourceUrl, quality, resolveId: info.resolveId }),
       })
       const data = await parseApiResponse<DownloadResult>(res)
@@ -111,7 +134,6 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
         fileId: data.fileId,
         status: "complete",
       })
-      // Trigger the browser download
       window.location.href = `/api/file/${data.fileId}`
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Download failed"
