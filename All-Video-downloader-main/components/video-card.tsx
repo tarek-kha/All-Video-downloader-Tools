@@ -103,22 +103,32 @@ export function VideoCard({ info, sourceUrl, onQueued, onSettled }: VideoCardPro
       const directData = await parseApiResponse<{ success: boolean; directUrl: string | null; ext?: string }>(directRes)
 
       if (directData.success && directData.directUrl) {
-        // Direct link works! Browser downloads straight from CDN.
-        const a = document.createElement("a")
-        a.href = directData.directUrl
-        a.target = "_blank"
-        a.download = `${info.title.slice(0, 80).replace(/[^a-z0-9\u0980-\u09FF]+/gi, "_")}.${directData.ext || "mp4"}`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
+        // Direct link works! Fetch as blob so mobile browsers actually SAVE
+        // the file instead of opening it in the built-in video player.
+        // If CORS blocks the fetch, fall through to server download.
+        try {
+          const res = await fetch(directData.directUrl, { method: "GET" })
+          if (!res.ok) throw new Error("CDN returned " + res.status)
+          const blob = await res.blob()
+          const blobUrl = window.URL.createObjectURL(blob)
+          const a = document.createElement("a")
+          a.href = blobUrl
+          a.download = `${info.title.slice(0, 80).replace(/[^a-z0-9\u0980-\u09FF]+/gi, "_")}.${directData.ext || "mp4"}`
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          window.URL.revokeObjectURL(blobUrl)
 
-        onSettled(historyId, {
-          filename: `direct.${directData.ext || "mp4"}`,
-          fileId: "direct",
-          status: "complete",
-        })
-        setDownloadingQuality(null)
-        return
+          onSettled(historyId, {
+            filename: `direct.${directData.ext || "mp4"}`,
+            fileId: "direct",
+            status: "complete",
+          })
+          setDownloadingQuality(null)
+          return
+        } catch {
+          // CORS or network error — fall through to server download
+        }
       }
 
       // PHASE 2: Fall back to server-side download (consumes Render bandwidth)
