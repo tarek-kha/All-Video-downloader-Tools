@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const sessionId = getOrCreateSessionId(request)
+  const { sessionId } = getOrCreateSessionId(request.cookies.get(SESSION_COOKIE)?.value)
   let url = ""
   let quality = "best"
 
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const cookiesPath = cookiesPathForPlatform(platformKey(url), sessionId)
+  const cookiesPath = cookiesPathForPlatform(sessionId, platformKey(url))
   const result = await getDirectUrl(url, quality, cookiesPath)
 
   const res = NextResponse.json(
